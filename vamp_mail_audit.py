@@ -1848,6 +1848,15 @@ def _parse_args() -> argparse.Namespace:
         metavar="FICHERO",
         help="Guardar el informe en HTML dark-theme autónomo",
     )
+    p.add_argument(
+        "--dkim-selector",
+        dest="dkim_selector",
+        action="append",
+        default=[],
+        metavar="SELECTOR",
+        help="Selector DKIM adicional a comprobar (repetible). Útil para selectores propios "
+             "no habituales, p.ej. --dkim-selector mi2024",
+    )
 
     # Grupo de argumentos del informe unificado VampSecure Labs
     from vampsec_report import add_report_args
@@ -1926,6 +1935,10 @@ def main() -> None:
     console.print(BANNER, style="bold magenta")
 
     args     = _parse_args()
+    # Selectores DKIM adicionales indicados por el usuario (para selectores propios no habituales)
+    for _sel in getattr(args, "dkim_selector", []) or []:
+        if _sel and _sel not in DKIM_SELECTORS:
+            DKIM_SELECTORS.append(_sel)
     domains  = _resolve_domains(args)
     auditor  = MailAuditor(mx_timeout=args.mx_timeout, no_smtp=args.no_smtp)
     reporter = Reporter(console)
