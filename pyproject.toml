@@ -1,0 +1,37 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.backends.legacy:build"
+
+[project]
+name = "vamp-mail-audit"
+version = "1.0"
+description = "Email infrastructure and SPF/DKIM/DMARC auditor for authorized assessments"
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.9"
+authors = [{ name = "VampSecure Studios", email = "contact@vampsecurestudios.com" }]
+keywords = ["security", "pentest", "audit", "cybersecurity", "vampsecure", "email", "spf", "dkim", "dmarc", "mail-security"]
+classifiers = [
+    "Development Status :: 5 - Production/Stable",
+    "Environment :: Console",
+    "Intended Audience :: Information Technology",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Topic :: Security",
+]
+dependencies = [
+    "dnspython>=2.4.0",
+    "rich>=13.7.0",
+]
+
+
+[project.scripts]
+vamp-mail-audit = "vamp_mail_audit:main"
+
+[project.urls]
+Homepage = "https://github.com/Vampsecure-Labs/vamp-mail-audit"
+Repository = "https://github.com/Vampsecure-Labs/vamp-mail-audit"
+
+[tool.setuptools]
+py-modules = ["vamp_mail_audit", "vampsec_report"]
