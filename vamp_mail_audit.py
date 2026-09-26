@@ -3,7 +3,7 @@
 vamp_mail_audit.py — Auditor de seguridad de correo electrónico
 ================================================================
 VampSecure Labs · VampSecure Studios
-Para Uso Exclusivo en Pruebas de Penetración Autorizadas — v1.0
+Para Uso Exclusivo en Pruebas de Penetración Autorizadas — v1.1
 
 DESCRIPCIÓN GENERAL
 -------------------
@@ -77,6 +77,8 @@ import re
 import smtplib
 import socket
 import sys
+import urllib.error
+import urllib.request
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from html import escape
@@ -90,7 +92,7 @@ from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
 
-VERSION   = "1.0"
+VERSION   = "1.1"
 TOOL_NAME = "vamp-mail-audit"
 
 console = Console()
@@ -101,7 +103,7 @@ __   ___   __  __ ___  ___ ___ ___ _   _ ___ ___ _      _   ___ ___
  \ V / _ \| |\/| |  _/\__ \ _| (__| |_| |   / _|| |__ / _ \| _ \__ \
   \_/_/ \_\_|  |_|_|  |___/___\___|\___/|_|_\___|____/_/ \_\___/___/
   by Antonio Hernandez "Belky" — VampSecure Studios
-  vamp-mail-audit v1.0 · Email Security Auditor
+  vamp-mail-audit v1.1 · Email Security Auditor
   ────────────────────────────────────────────────────────────────────────
   USO EXCLUSIVO EN AUDITORÍAS AUTORIZADAS · El uso no autorizado es ilegal
 """
@@ -405,6 +407,47 @@ _REMED_BANNER_LEAK = (
     "identificar CVEs específicos de esa versión y lanzar ataques dirigidos."
 )
 
+_REMED_BIMI_ABSENT = (
+    "Configurar BIMI (Brand Indicators for Message Identification) para mostrar\n"
+    "la imagen de marca en los clientes de correo compatibles.\n"
+    "Requisitos previos obligatorios:\n"
+    "  · DMARC con p=quarantine o p=reject y pct=100\n"
+    "  · Logotipo en formato SVG Tiny PS (perfil estricto)\n"
+    "Pasos:\n"
+    "  1. Preparar el logotipo en SVG Tiny PS y alojarlo en HTTPS:\n"
+    "       https://example.com/logo.svg\n"
+    "  2. Publicar el registro DNS:\n"
+    "       default._bimi.ejemplo.com. IN TXT\n"
+    "         \"v=BIMI1; l=https://example.com/logo.svg\"\n"
+    "  3. Opcional pero recomendado: obtener un VMC (Mark Verified Certificate)\n"
+    "       de una CA acreditada (DigiCert, Entrust) y añadir el tag 'a=':\n"
+    "       \"v=BIMI1; l=https://example.com/logo.svg; a=https://example.com/logo.pem\"\n"
+    "Ref: BIMI Working Group — https://bimigroup.org/\n"
+    "     RFC 9399 — Brand Indicators for Message Identification (BIMI)"
+)
+
+_REMED_MTA_STS_ABSENT = (
+    "Configurar MTA-STS (SMTP MTA Strict Transport Security, RFC 8461) para\n"
+    "forzar el uso de TLS en el correo entrante a este dominio.\n"
+    "Pasos:\n"
+    "  1. Crear el fichero de política en:\n"
+    "       https://mta-sts.ejemplo.com/.well-known/mta-sts.txt\n"
+    "     Contenido recomendado (modo enforce):\n"
+    "       version: STSv1\n"
+    "       mode: enforce\n"
+    "       mx: mail.ejemplo.com\n"
+    "       max_age: 86400\n"
+    "  2. Publicar el registro DNS:\n"
+    "       _mta-sts.ejemplo.com. IN TXT \"v=STSv1; id=20240101T000000Z\"\n"
+    "       (el 'id' debe cambiar cada vez que se actualice la política)\n"
+    "  3. Empezar con mode: testing para verificar que no hay falsos positivos;\n"
+    "       migrar a mode: enforce tras analizar los informes TLS-RPT.\n"
+    "Complementario: configurar TLS-RPT para recibir informes:\n"
+    "  _smtp._tls.ejemplo.com. IN TXT \"v=TLSRPTv1; rua=mailto:tls-reports@ejemplo.com\"\n"
+    "Ref: RFC 8461 — SMTP MTA Strict Transport Security (MTA-STS)\n"
+    "     RFC 8460 — SMTP TLS Reporting"
+)
+
 
 # ---------------------------------------------------------------------------
 # Motor de auditoría
@@ -414,12 +457,14 @@ class MailAuditor:
     """
     Motor principal de auditoría de seguridad de correo electrónico.
 
-    Realiza cinco fases de análisis:
-      1. SPF  — Sender Policy Framework (RFC 7208)
-      2. DMARC — Domain-based Message Authentication (RFC 7489)
-      3. DKIM — DomainKeys Identified Mail (RFC 6376)
-      4. MX  — Registros de intercambio de correo
-      5. SMTP — Sondas activas: STARTTLS, open relay, banner
+    Realiza siete fases de análisis:
+      1. SPF     — Sender Policy Framework (RFC 7208)
+      2. DMARC   — Domain-based Message Authentication (RFC 7489)
+      3. DKIM    — DomainKeys Identified Mail (RFC 6376)
+      4. MX      — Registros de intercambio de correo
+      5. SMTP    — Sondas activas: STARTTLS, open relay, banner
+      6. BIMI    — Brand Indicators for Message Identification (RFC 9399)
+      7. MTA-STS — SMTP MTA Strict Transport Security (RFC 8461)
 
     La fase SMTP puede deshabilitarse con no_smtp=True para análisis
     rápido solo basado en DNS (útil cuando el puerto 25 está filtrado
@@ -467,6 +512,9 @@ class MailAuditor:
 
             if not self._no_smtp and mx_records:
                 self._audit_smtp(domain, mx_records, findings)
+
+            self._audit_bimi(domain, findings)
+            self._audit_mta_sts(domain, findings)
 
         except Exception as exc:
             return MailAuditResult(
@@ -1232,6 +1280,216 @@ class MailAuditor:
                 smtp.quit()
             except Exception:
                 pass
+
+    # ------------------------------------------------------------------ Fase 6: BIMI
+
+    def _audit_bimi(self, domain: str, findings: List[Finding]) -> None:
+        """
+        Valida el registro BIMI (Brand Indicators for Message Identification).
+
+        Consulta el selector por defecto 'default._bimi.<domain>'. Un registro
+        BIMI válido permite mostrar la imagen de marca del remitente en clientes
+        de correo compatibles (Gmail, Yahoo Mail, Apple Mail, etc.).
+
+        Parámetros
+        ----------
+        domain   : str           — Dominio a consultar
+        findings : List[Finding] — Lista donde añadir los hallazgos
+        """
+        bimi_domain  = f"default._bimi.{domain}"
+        txt_records  = self._query_txt(bimi_domain)
+        # Registro válido: contiene el tag v=BIMI1 (insensible a mayúsculas)
+        bimi_records = [r for r in txt_records if "v=bimi1" in r.lower()]
+
+        if not txt_records:
+            # Sin ningún registro TXT en el subdominio BIMI
+            findings.append(Finding(
+                severity="INFO",
+                category="BIMI",
+                title="BIMI no configurado",
+                description=(
+                    f"No se encontró registro BIMI en {bimi_domain}. "
+                    "Sin BIMI la imagen de marca del remitente no se mostrará "
+                    "en los clientes de correo compatibles (Gmail, Yahoo Mail, etc.)."
+                ),
+                evidence=f"DNS TXT {bimi_domain}: sin registro",
+                remediation=_REMED_BIMI_ABSENT,
+            ))
+            return
+
+        if not bimi_records:
+            # Hay registros TXT pero ninguno tiene v=BIMI1
+            findings.append(Finding(
+                severity="MEDIUM",
+                category="BIMI",
+                title="Registro BIMI malformado",
+                description=(
+                    f"Se encontró un registro TXT en {bimi_domain} pero no contiene "
+                    "el tag requerido 'v=BIMI1'. El registro no será reconocido por los "
+                    "clientes de correo compatibles con BIMI."
+                ),
+                evidence="\n".join(txt_records),
+                remediation=_REMED_BIMI_ABSENT,
+            ))
+            return
+
+        # Registro BIMI válido encontrado
+        bimi = bimi_records[0]
+        findings.append(Finding(
+            severity="INFO",
+            category="BIMI",
+            title="BIMI configurado",
+            description=(
+                f"El dominio {domain} tiene un registro BIMI válido (v=BIMI1). "
+                "La imagen de marca del remitente podrá mostrarse en clientes de "
+                "correo compatibles."
+            ),
+            evidence=f"{bimi_domain}: {bimi[:200]}",
+        ))
+
+        # Verificar la presencia del tag 'a=' (VMC — Mark Verified Certificate)
+        if "a=" in bimi.lower():
+            findings.append(Finding(
+                severity="INFO",
+                category="BIMI",
+                title="BIMI con certificado VMC",
+                description=(
+                    f"El registro BIMI de {domain} incluye el tag 'a=' con un VMC "
+                    "(Mark Verified Certificate). Esto garantiza la autenticidad de la "
+                    "imagen de marca ante los proveedores de correo que requieren VMC "
+                    "para mostrar la insignia verificada."
+                ),
+                evidence=f"{bimi_domain}: {bimi[:200]}",
+            ))
+
+    # ------------------------------------------------------------------ Fase 7: MTA-STS
+
+    def _audit_mta_sts(self, domain: str, findings: List[Finding]) -> None:
+        """
+        Valida MTA-STS (SMTP MTA Strict Transport Security, RFC 8461).
+
+        Comprueba la presencia del registro DNS TXT en _mta-sts.<domain> y,
+        si existe, descarga y analiza la política publicada en la URL canónica
+        https://mta-sts.<domain>/.well-known/mta-sts.txt.
+
+        Parámetros
+        ----------
+        domain   : str           — Dominio a consultar
+        findings : List[Finding] — Lista donde añadir los hallazgos
+        """
+        sts_domain   = f"_mta-sts.{domain}"
+        txt_records  = self._query_txt(sts_domain)
+        # Registro válido: contiene el tag v=STSv1
+        sts_records  = [r for r in txt_records if "v=stsv1" in r.lower()]
+
+        if not sts_records:
+            findings.append(Finding(
+                severity="INFO",
+                category="MTA-STS",
+                title="MTA-STS no configurado",
+                description=(
+                    f"No se encontró registro MTA-STS en {sts_domain}. "
+                    "Sin MTA-STS no existe política de TLS forzado para el correo "
+                    "entrante: un atacante con acceso a la red puede degradar la "
+                    "conexión SMTP a texto claro sin que los servidores de origen lo detecten."
+                ),
+                evidence=f"DNS TXT {sts_domain}: sin registro v=STSv1",
+                remediation=_REMED_MTA_STS_ABSENT,
+            ))
+            return
+
+        # Registro DNS MTA-STS encontrado — descargar la política HTTP
+        policy_url = f"https://mta-sts.{domain}/.well-known/mta-sts.txt"
+        try:
+            req = urllib.request.Request(
+                policy_url,
+                headers={"User-Agent": f"{TOOL_NAME}/{VERSION}"},
+            )
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                policy_text = resp.read().decode(errors="replace")
+        except (urllib.error.URLError, OSError, Exception):
+            # No se puede acceder a la URL de la política
+            findings.append(Finding(
+                severity="MEDIUM",
+                category="MTA-STS",
+                title="Registro MTA-STS DNS presente pero política HTTP no accesible",
+                description=(
+                    f"El registro DNS MTA-STS existe en {sts_domain} pero no se puede "
+                    f"acceder a la política en {policy_url}. Sin la política HTTP publicada, "
+                    "los servidores de correo no pueden aplicar las restricciones de TLS."
+                ),
+                evidence=f"DNS TXT {sts_domain}: {sts_records[0][:200]}\nHTTP GET {policy_url}: error",
+                remediation=_REMED_MTA_STS_ABSENT,
+            ))
+            return
+
+        # Analizar el campo 'mode' de la política MTA-STS
+        mode = ""
+        for line in policy_text.splitlines():
+            line = line.strip()
+            if line.lower().startswith("mode:"):
+                mode = line.split(":", 1)[1].strip().lower()
+                break
+
+        evidence_base = (
+            f"DNS TXT {sts_domain}: {sts_records[0][:200]}\n"
+            f"Política: {policy_url}\n"
+            f"{policy_text[:400]}"
+        )
+
+        if mode == "enforce":
+            findings.append(Finding(
+                severity="INFO",
+                category="MTA-STS",
+                title="MTA-STS en modo enforce (óptimo)",
+                description=(
+                    f"El dominio {domain} tiene MTA-STS configurado en modo 'enforce'. "
+                    "Los servidores de correo origen deben usar TLS para entregar correo "
+                    "a este dominio o rechazar el intento de entrega. Configuración óptima."
+                ),
+                evidence=evidence_base,
+            ))
+        elif mode == "testing":
+            findings.append(Finding(
+                severity="LOW",
+                category="MTA-STS",
+                title="MTA-STS en modo testing (no aplica políticas)",
+                description=(
+                    f"El dominio {domain} tiene MTA-STS en modo 'testing'. "
+                    "En este modo se recopilan informes pero NO se rechaza el correo "
+                    "que no cumple la política TLS. El correo entrante sigue sin protección "
+                    "efectiva contra ataques de downgrade TLS."
+                ),
+                evidence=evidence_base,
+                remediation=_REMED_MTA_STS_ABSENT,
+            ))
+        elif mode == "none":
+            findings.append(Finding(
+                severity="MEDIUM",
+                category="MTA-STS",
+                title="MTA-STS desactivado (mode: none)",
+                description=(
+                    f"El dominio {domain} tiene MTA-STS configurado con 'mode: none', "
+                    "lo que desactiva explícitamente cualquier exigencia de TLS. "
+                    "El registro DNS existe pero la política no protege el correo entrante."
+                ),
+                evidence=evidence_base,
+                remediation=_REMED_MTA_STS_ABSENT,
+            ))
+        else:
+            # Modo no reconocido o política vacía
+            findings.append(Finding(
+                severity="MEDIUM",
+                category="MTA-STS",
+                title="Registro MTA-STS DNS presente pero política HTTP no accesible",
+                description=(
+                    f"El registro DNS MTA-STS existe en {sts_domain} y la política HTTP "
+                    f"en {policy_url} es accesible, pero no contiene un campo 'mode' válido. "
+                    "La política MTA-STS no será procesada correctamente por los servidores de correo."
+                ),
+                evidence=evidence_base,
+                remediation=_REMED_MTA_STS_ABSENT,
+            ))
 
     # ------------------------------------------------------------------ Utilidades DNS
 
