@@ -79,7 +79,7 @@ import socket
 import sys
 import urllib.error
 import urllib.request
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from html import escape
 from pathlib import Path
@@ -1621,7 +1621,7 @@ class Reporter:
                 if f.severity in ("CRITICAL", "HIGH") and f.remediation
             ]
             if criticos:
-                self._c.print(f"\n  [bold cyan]Remediaciones prioritarias:[/]")
+                self._c.print("\n  [bold cyan]Remediaciones prioritarias:[/]")
                 for f in criticos:
                     self._c.print(
                         Panel(
@@ -1802,7 +1802,7 @@ class Reporter:
                 continue
 
             sev        = r.max_severity
-            sev_cls    = SEV_CSS.get(sev, "sev-info")
+            SEV_CSS.get(sev, "sev-info")
             badge_col  = SEV_BADGE_COLOR.get(sev, "#555")
             badge_text = "#fff" if sev in ("CRITICAL", "HIGH", "INFO", "LOW") else "#000"
             ts         = r.timestamp[:19].replace("T", " ") + " UTC" if r.timestamp else ""
@@ -1810,7 +1810,7 @@ class Reporter:
             # Registros DNS
             def _rec(value: Optional[str], label: str) -> str:
                 if not value:
-                    return f'<span class="sev-high">AUSENTE</span>'
+                    return '<span class="sev-high">AUSENTE</span>'
                 safe = escape(value[:150] + ("…" if len(value) > 150 else ""))
                 return f'<code>{safe}</code>'
 
