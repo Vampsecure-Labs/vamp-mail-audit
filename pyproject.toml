@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "vamp-mail-audit"
-version = "1.1"
-description = "Email infrastructure and SPF/DKIM/DMARC auditor for authorized assessments"
+version = "1.2.0"
+description = "Email infrastructure and SPF/DKIM/DMARC auditor for authorized assessments — importable library + CLI"
 readme = "README.md"
 license = { text = "AGPL-3.0-only" }
 requires-python = ">=3.9"
@@ -34,4 +34,5 @@ Homepage = "https://github.com/Vampsecure-Labs/vamp-mail-audit"
 Repository = "https://github.com/Vampsecure-Labs/vamp-mail-audit"
 
 [tool.setuptools]
-py-modules = ["vamp_mail_audit", "vampsec_report"]
+packages = ["vamp_mail_audit"]
+py-modules = ["vampsec_report"]
