@@ -17,10 +17,8 @@ from rich.table import Table
 from rich.text import Text
 
 from ._models import (
-    Finding,
     MailAuditResult,
     SEVERITY_COLOR,
-    SEVERITY_ORDER,
     TOOL_NAME,
     VERSION,
 )
