@@ -127,6 +127,70 @@ python3 vamp_mail_audit.py -f domains.txt \
 | `1` | High-severity findings detected | Pipeline fails — review required |
 | `2` | Critical-severity findings detected | Pipeline fails — immediate action required |
 
+## Sample Output
+
+```
+  vamp-mail-audit v1.1 · auditing example.com
+  ──────────────────────────────────────────────────────────────
+  [+] DNS lookups complete · SMTP probe: mx1.example.com:25
+
+  ┌─ CRITICAL ──────────────────────────────────────────────────────────┐
+  │  MAIL-003  SPF policy ends with +all (accept all)                   │
+  │  Record:   v=spf1 include:_spf.example.com +all                     │
+  │  Impact:   Any host on the internet can send as @example.com        │
+  │  Fix:      Replace +all with -all or ~all                           │
+  └─────────────────────────────────────────────────────────────────────┘
+
+  [HIGH]   MAIL-006  DMARC record absent — no enforcement policy
+  [HIGH]   MAIL-009  DKIM: no valid selector found (15 selectors probed)
+  [HIGH]   MAIL-013  Open relay detected — external RCPT TO accepted
+  [MEDIUM] MAIL-007  DMARC p=none (monitoring only, no enforcement)
+  [MEDIUM] MAIL-011  DKIM key size 1024 bits on selector 'mail' (< 2048 recommended)
+  [LOW]    MAIL-014  SMTP banner discloses software version: Postfix 3.6.4
+  [INFO]   MAIL-015  MTA-STS not configured (SMTP traffic not enforced TLS)
+
+  ──────────────────────────────────────────────────
+  SPF: FAIL · DKIM: FAIL · DMARC: FAIL
+  Overall posture: CRITICAL — immediate remediation required
+  Total: 7 findings
+```
+
+## Why vamp-mail-audit vs. MxToolbox · mail-tester.com · Hardenize
+
+| Feature | vamp-mail-audit | MxToolbox | mail-tester.com | Hardenize |
+|---------|:---------------:|:---------:|:---------------:|:---------:|
+| Fully offline / no cloud dependency | ✅ | ❌ | ❌ | ❌ |
+| Batch multi-domain scan from file | ✅ | ❌ | ❌ | ✅ |
+| Structured JSON + HTML export | ✅ | ❌ (paid) | ❌ | ❌ |
+| Client engagement report (PDF + HTML) | ✅ | ❌ | ❌ | ❌ |
+| DKIM key-size analysis per selector | ✅ | ✅ | ❌ | ✅ |
+| Open relay active test | ✅ | ✅ | ❌ | ❌ |
+| CI/CD integration via exit codes | ✅ | ❌ | ❌ | ❌ |
+| MTA-STS / DANE / BIMI checks | ✅ | ✅ | ❌ | ✅ |
+
+- **Built for auditors, not for IT admins.** vamp-mail-audit produces a client-ready engagement report (HTML + PDF) with auditor name, client name, and scope — output that goes straight into a pentest deliverable. MxToolbox and mail-tester.com produce web pages with no structured export.
+- **Batch scanning with consistent results.** Feed a file with 50 domains and get a single JSON with all findings in one run, suitable for automated monitoring. No web UI, no rate-limit popups.
+- **No data leaves your machine.** DNS queries go to your configured resolver; optional SMTP probing connects only to the target MX. MxToolbox and mail-tester.com send your domain to their cloud — not suitable for confidential client assessments.
+- **CI/CD native.** Exit codes (`0` / `1` / `2`) integrate with GitHub Actions, GitLab CI, or Jenkins so email posture regressions break the pipeline before they reach production.
+
+## Check Coverage
+
+| Check ID | Description | Standard | Severity |
+|----------|-------------|----------|----------|
+| MAIL-001 | SPF record absent — domain not protected against email spoofing | RFC 7208 | HIGH |
+| MAIL-002 | Duplicate SPF TXT records (RFC 7208 §3.2 violation) | RFC 7208 §3.2 | HIGH |
+| MAIL-003 | SPF ends with `+all` or `?all` — any host accepted as sender | RFC 7208 | CRITICAL |
+| MAIL-004 | SPF uses `~all` softfail (no rejection of unauthorized senders) | RFC 7208 | MEDIUM |
+| MAIL-005 | SPF lookup count exceeds 10 (DNS lookup limit exceeded) | RFC 7208 §4.6.4 | MEDIUM |
+| MAIL-006 | DMARC record absent — no policy enforcement for the domain | RFC 7489 | HIGH |
+| MAIL-007 | DMARC policy `p=none` (reporting only, zero enforcement) | RFC 7489 | HIGH |
+| MAIL-008 | DMARC `pct < 100` (partial policy application) | RFC 7489 | LOW |
+| MAIL-009 | DKIM: no valid public key found across 15 common selectors | RFC 6376 | HIGH |
+| MAIL-010 | DKIM key size below 1024 bits (cryptographically weak) | RFC 6376 | HIGH |
+| MAIL-011 | DKIM key size 1024–2047 bits (below recommended 2048) | RFC 6376 | MEDIUM |
+| MAIL-012 | STARTTLS not advertised on port 25 (plaintext SMTP allowed) | RFC 3207 | HIGH |
+| MAIL-013 | Open relay: external RCPT TO accepted without authentication | RFC 5321 | CRITICAL |
+
 ## Legal Notice
 
 Use exclusively on systems you own or for which you hold explicit written authorization from the domain owner. Active SMTP probing (`--no-smtp` off) performs live connections to target mail servers. VampSecure Studios assumes no liability for unauthorized use.
