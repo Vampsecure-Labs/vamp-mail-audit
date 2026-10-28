@@ -125,7 +125,7 @@ python3 vamp_mail_audit.py -f domains.txt \
 ### Sample Output
 
 ```
-  vamp-mail-audit v1.2 · auditing example.com
+  vamp-mail-audit v1.2.0 · auditing example.com
   ──────────────────────────────────────────────────────────────
   [+] DNS lookups complete · SMTP probe: mx1.example.com:25
 
